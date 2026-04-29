@@ -16,7 +16,7 @@ Original data cannot be shared publicly due to Tribal data governance requiremen
 
 ## Demo Script
 
-`aian_gdm_oklahoma.R` replicates the full analysis pipeline using **synthetic data** generated with parameters fixed at the posterior means from Peterson et al. (2025). It requires no external data files.
+`demo_aian_gdm_oklahoma.R` replicates the full analysis pipeline using **synthetic data** generated with parameters fixed at the posterior means from Peterson et al. (2025). It requires no external data files.
 
 ### Requirements
 
@@ -27,7 +27,7 @@ install.packages(c("nimble", "coda", "tidyverse", "tigris", "sf", "spdep", "MASS
 ### Usage
 
 ```r
-source("aian_gdm_oklahoma.R")
+source("demo_aian_gdm_oklahoma.R")
 ```
 
 Runtime: ~20–30 minutes (3 chains × 10,000 iterations). Adjust `n_chains` / `n_iter` in Section 7 to shorten.
