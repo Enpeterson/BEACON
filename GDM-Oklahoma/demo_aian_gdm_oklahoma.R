@@ -64,7 +64,7 @@ ok_map <- ok_map[order(ok_map$NAME), ]
 #
 #   x_c: covariates for true prevalence model (SNAP, food access, prenatal care)
 #   w_c: covariate for sensitivity model (log proportion AIAN)
-#   d_c: covariates for CN coverage model (IHS clinic count, CN indicator)
+#   d_c: covariates for CN coverage model (CN clinic count, distance-decay spillover)
 ###############################################################################
 
 cat("Generating synthetic covariates...\n")
@@ -77,14 +77,41 @@ adequate_care  <- rbeta(C, 7,  2)   # proportion with adequate prenatal care (~m
 # w_c -- log(proportion AIAN); bound away from zero for log transform
 prop_aian <- pmax(rbeta(C, 1, 18), 0.001)   # ~mean 0.05, right-skewed
 
-# d_c -- Cherokee Nation service counties (7 counties, publicly known)
+# d_c -- Cherokee Nation clinic count + distance-decay spillover
+# CN service counties (7 counties with CN clinical data, publicly known)
 cn_county_names <- c("Adair", "Cherokee", "Delaware", "Mayes",
                      "Muskogee", "Rogers", "Sequoyah")
-cn_idx        <- which(county_names %in% cn_county_names)
-cov_indicator <- as.integer(county_names %in% cn_county_names)
+cn_idx    <- which(county_names %in% cn_county_names)
+n_clinics <- rep(0L, C)
+n_clinics[cn_idx] <- sample(1:2, length(cn_idx), replace = TRUE)
 
-n_clinics              <- rpois(C, 0.2)
-n_clinics[cn_idx]      <- n_clinics[cn_idx] + sample(1:2, length(cn_idx), replace = TRUE)
+# Distance-decay CN spillover covariate.
+# Publicly known Cherokee Nation Health Services facility coordinates
+# (cherokee.org/services/health; no data use agreement required for locations).
+# Weight = exp(-distance_km / 75); own-county clinics excluded (captured by n_clinics).
+cn_clinic_coords <- data.frame(
+  lat    = c(35.9106, 35.9098, 35.7297, 36.4212, 36.7480,
+             35.4587, 35.8144, 36.2929, 36.7006, 36.6408),
+  long   = c(-94.9710, -94.9478, -95.3104, -94.8043, -95.9724,
+             -94.7879, -94.6286, -95.1533, -95.6380, -95.1564),
+  county = c("Cherokee", "Cherokee", "Muskogee", "Delaware", "Washington",
+             "Sequoyah", "Adair", "Mayes", "Nowata", "Craig")
+)
+
+lambda_km           <- 75
+cn_clinics_sf       <- st_as_sf(cn_clinic_coords, coords = c("long", "lat"), crs = 4326) %>%
+  st_transform(crs = 5070)
+county_centroids_sf <- ok_map %>%
+  st_transform(crs = 5070) %>%
+  st_centroid() %>%
+  arrange(NAME)
+
+dist_km          <- matrix(as.numeric(st_distance(county_centroids_sf, cn_clinics_sf)),
+                           nrow = C) / 1000
+same_county_mask <- outer(county_centroids_sf$NAME, cn_clinic_coords$county, FUN = "==")
+decay_matrix     <- exp(-dist_km / lambda_km)
+decay_matrix[same_county_mask] <- 0
+cn_spillover     <- rowSums(decay_matrix)
 
 ###############################################################################
 # 4. Simulate Synthetic Data
@@ -98,13 +125,12 @@ cat("Simulating synthetic data...\n")
 # --- True parameter values ---
 beta0  <- -1.56;  beta1  <-  3.50;  beta2  <- -0.36;  beta3  <- -0.36
 gamma0 <- -0.46;  gamma1 <- -0.36
-alpha0 <- -1.48;  alpha1 <-  0.97;  alpha2 <-  1.67
+alpha0 <- -1.48;  alpha1 <-  0.97;  alpha3 <-  1.00
 
-sigma_p_v     <- 0.345
-sigma_p_u     <- 0.321
-sigma_phi_v   <- 0.540
-sigma_phi_u   <- 0.288
-sigma_kappa_v <- 3.862
+sigma_p_v   <- 0.345
+sigma_p_u   <- 0.321
+sigma_phi_v <- 0.540
+sigma_phi_u <- 0.288
 
 # --- Helper: draw from ICAR prior ---
 sim_icar <- function(nb, sigma, C) {
@@ -120,15 +146,13 @@ v_p_c     <- sim_icar(Co_nb, sigma_p_v,     C)
 u_p_c     <- rnorm(C, 0, sigma_p_u)
 v_phi_c   <- sim_icar(Co_nb, sigma_phi_v,   C)
 u_phi_c   <- rnorm(C, 0, sigma_phi_u)
-v_kappa_c <- sim_icar(Co_nb, sigma_kappa_v, C)
-
 # --- Compute latent surfaces ---
 rho_true_c <- plogis(beta0 + beta1 * propSNAP + beta2 * prop_lowaccess +
                        beta3 * adequate_care + v_p_c + u_p_c)
 
 phi_c      <- plogis(gamma0 + gamma1 * log(prop_aian) + v_phi_c + u_phi_c)
 
-kappa_c    <- plogis(alpha0 + alpha1 * n_clinics + alpha2 * cov_indicator + v_kappa_c)
+kappa_c    <- plogis(alpha0 + alpha1 * n_clinics + alpha3 * cn_spillover)
 
 # --- Synthetic OSDH data (y^{OSDH}_c, n^{OSDH}_c) ---
 # AI/AN births per county proportional to prop_aian; counties with < 5 suppressed
@@ -194,11 +218,10 @@ myCode <- nimbleCode({
                        v_phi_c[c] + u_phi_c[c]
 
     # CN detection/coverage [Eq. 5]:
-    # logit(kappa_c) = alpha_0 + d_c'*alpha + v_kappa_c
+    # logit(kappa_c) = alpha_0 + d_c'*alpha
     logit(kappa_c[c]) <- alpha0 +
-                         alpha1 * n_clinics[c] +      # d_c: IHS clinic count
-                         alpha2 * cov_indicator[c] +  # d_c: CN coverage indicator
-                         v_kappa_c[c]
+                         alpha1 * n_clinics[c] +    # d_c: CN clinic count
+                         alpha3 * cn_spillover[c]   # d_c: distance-decay spillover
 
     # iid random effects
     u_p_c[c]   ~ dnorm(0, sd = sigma_p_u)    # u_c^{(p)}   ~ N(0, sigma_{p,u}^2)
@@ -210,9 +233,6 @@ myCode <- nimbleCode({
                                        tau = 1 / (sigma_p_v^2),     zero_mean = 1)
   v_phi_c[1:Ncounties]   ~ dcar_normal(adj[1:L], weights[1:L], num[1:Ncounties],  # v_c^{(phi)}
                                        tau = 1 / (sigma_phi_v^2),   zero_mean = 1)
-  v_kappa_c[1:Ncounties] ~ dcar_normal(adj[1:L], weights[1:L], num[1:Ncounties],  # v_c^{(kappa)}
-                                       tau = 1 / (sigma_kappa_v^2), zero_mean = 1)
-
   # --- Priors: regression coefficients [Eq. 6] ---
   beta0 ~ dnorm(-2,  sd = 1)   # centered at logit(0.12), ~10-15% AIAN GDM prevalence
   beta1 ~ dnorm(0.5, sd = 5)   # beta: SNAP
@@ -222,16 +242,15 @@ myCode <- nimbleCode({
   gamma0 ~ dnorm(0, sd = 1)    # centered at logit(0.5) = 50% sensitivity
   gamma1 ~ dnorm(0, sd = 1)    # gamma: log(proportion AIAN)
 
-  alpha0 ~ dnorm(0.5, sd = 5)
-  alpha1 ~ dnorm(0,   sd = 1)  # alpha: IHS clinic count
-  alpha2 ~ dnorm(0,   sd = 1)  # alpha: CN coverage indicator
+  alpha0 ~ dnorm(-1,  sd = 1)
+  alpha1 ~ dnorm(0,   sd = 1)  # alpha: CN clinic count
+  alpha3 ~ dnorm(0,   sd = 1)  # alpha: distance-decay spillover
 
   # --- Priors: variance components, Half-Normal(0, 2.5) [Eq. 6] ---
-  sigma_p_u     ~ T(dnorm(0, sd = 2.5), 0.0001, )
-  sigma_p_v     ~ T(dnorm(0, sd = 2.5), 0.0001, )
-  sigma_phi_u   ~ T(dnorm(0, sd = 2.5), 0.0001, )
-  sigma_phi_v   ~ T(dnorm(0, sd = 2.5), 0.0001, )
-  sigma_kappa_v ~ T(dnorm(0, sd = 2.5), 0.0001, )
+  sigma_p_u   ~ T(dnorm(0, sd = 2.5), 0.0001, )
+  sigma_p_v   ~ T(dnorm(0, sd = 2.5), 0.0001, )
+  sigma_phi_u ~ T(dnorm(0, sd = 2.5), 0.0001, )
+  sigma_phi_v ~ T(dnorm(0, sd = 2.5), 0.0001, )
 
 })
 
@@ -248,8 +267,8 @@ myData <- list(
   prop_lowaccess = prop_lowaccess,
   adequate_care  = adequate_care,
   prop_aian     = prop_aian,
-  n_clinics     = n_clinics,
-  cov_indicator = cov_indicator
+  n_clinics    = n_clinics,
+  cn_spillover = cn_spillover
 )
 
 myConstants <- list(
@@ -272,19 +291,17 @@ inits_fn <- function() {
     beta3         = rnorm(1,  0.5, 1),
     gamma0        = rnorm(1,  0, 0.5),
     gamma1        = rnorm(1,  0, 0.5),
-    alpha0        = rnorm(1,  0, 1),
-    alpha1        = rnorm(1,  0, 0.5),
-    alpha2        = rnorm(1,  0, 0.5),
-    sigma_p_u     = runif(1, 0.1, 1),
-    sigma_p_v     = runif(1, 0.1, 1),
-    sigma_phi_u   = runif(1, 0.1, 1),
-    sigma_phi_v   = runif(1, 0.1, 1),
-    sigma_kappa_v = runif(1, 0.5, 2),
-    u_p_c         = rnorm(C, 0, 0.1),
-    u_phi_c       = rnorm(C, 0, 0.1),
-    v_p_c         = rep(0, C),
-    v_phi_c       = rep(0, C),
-    v_kappa_c     = rep(0, C)
+    alpha0      = rnorm(1, -1, 0.5),
+    alpha1      = rnorm(1,  0, 0.5),
+    alpha3      = rnorm(1,  0, 0.5),
+    sigma_p_u   = runif(1, 0.1, 1),
+    sigma_p_v   = runif(1, 0.1, 1),
+    sigma_phi_u = runif(1, 0.1, 1),
+    sigma_phi_v = runif(1, 0.1, 1),
+    u_p_c       = rnorm(C, 0, 0.1),
+    u_phi_c     = rnorm(C, 0, 0.1),
+    v_p_c       = rep(0, C),
+    v_phi_c     = rep(0, C)
   )
 }
 
@@ -302,9 +319,9 @@ n_thin   <- 5
 params_monitor <- c(
   "beta0", "beta1", "beta2", "beta3",
   "gamma0", "gamma1",
-  "alpha0", "alpha1", "alpha2",
+  "alpha0", "alpha1", "alpha3",
   "sigma_p_u", "sigma_p_v",
-  "sigma_phi_u", "sigma_phi_v", "sigma_kappa_v",
+  "sigma_phi_u", "sigma_phi_v",
   "rho_true_c", "phi_c", "kappa_c"
 )
 
@@ -335,9 +352,9 @@ cat("\nExtracting results...\n")
 scalar_params <- c(
   "beta0", "beta1", "beta2", "beta3",
   "gamma0", "gamma1",
-  "alpha0", "alpha1", "alpha2",
+  "alpha0", "alpha1", "alpha3",
   "sigma_p_u", "sigma_p_v",
-  "sigma_phi_u", "sigma_phi_v", "sigma_kappa_v"
+  "sigma_phi_u", "sigma_phi_v"
 )
 
 rhat_vals <- coda::gelman.diag(fit$samples[, scalar_params],
@@ -353,19 +370,18 @@ results_table <- data.frame(
     "gamma0 (Sensitivity intercept)",
     "gamma1 (log proportion AIAN)",
     "alpha0 (CN coverage intercept)",
-    "alpha1 (IHS clinic count)",
-    "alpha2 (CN coverage indicator)",
-    "sigma_p_u     (iid SD, prevalence)",
-    "sigma_p_v     (ICAR SD, prevalence)",
-    "sigma_phi_u   (iid SD, sensitivity)",
-    "sigma_phi_v   (ICAR SD, sensitivity)",
-    "sigma_kappa_v (ICAR SD, CN coverage)"
+    "alpha1 (CN clinic count)",
+    "alpha3 (distance-decay spillover)",
+    "sigma_p_u   (iid SD, prevalence)",
+    "sigma_p_v   (ICAR SD, prevalence)",
+    "sigma_phi_u (iid SD, sensitivity)",
+    "sigma_phi_v (ICAR SD, sensitivity)"
   ),
   True_Value = c(beta0, beta1, beta2, beta3,
                  gamma0, gamma1,
-                 alpha0, alpha1, alpha2,
+                 alpha0, alpha1, alpha3,
                  sigma_p_u, sigma_p_v,
-                 sigma_phi_u, sigma_phi_v, sigma_kappa_v),
+                 sigma_phi_u, sigma_phi_v),
   Post_Mean  = round(fit$summary$all.chains[scalar_params, "Mean"],      3),
   Post_SD    = round(fit$summary$all.chains[scalar_params, "St.Dev."],   3),
   LCI_95     = round(fit$summary$all.chains[scalar_params, "95%CI_low"], 3),
