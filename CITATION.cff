@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software or methods, please cite the paper below."
+type: software
+title: "BEACON: Bayesian Estimation and Correction for AI/AN Outcomes using Native-data"
+repository-code: "https://github.com/Enpeterson/BEACON"
+license: MIT
+authors:
+  - family-names: Peterson
+    given-names: Emily N.
+    affiliation: Emory University
+preferred-citation:
+  type: article
+  title: >
+    Bayesian spatial estimation of adjusted AI/AN gestational diabetes prevalence
+    in Oklahoma integrating Cherokee Nation clinical surveillance
+  authors:
+    - family-names: Peterson
+      given-names: Emily N.
+  journal: "Journal of the Royal Statistical Society Series C"
+  year: 2025
+  # doi: "10.XXXX/XXXXXXX"   # add when assigned
+  notes: >
+    Update doi field above when the paper is assigned a DOI.
+    Data use agreement required for Cherokee Nation clinical data;
+    contact Cherokee Nation Public Health (cherokee.org/services/health).

@@ -311,10 +311,10 @@ inits_fn <- function() {
 #    The full analysis used 5 chains x 60,000 iterations (30,000 burn-in).
 ###############################################################################
 
-n_chains <- 3
-n_iter   <- 10000
-n_burn   <- 5000
-n_thin   <- 5
+if (!exists("n_chains")) n_chains <- 3
+if (!exists("n_iter"))   n_iter   <- 10000
+if (!exists("n_burn"))   n_burn   <- 5000
+if (!exists("n_thin"))   n_thin   <- 5
 
 params_monitor <- c(
   "beta0", "beta1", "beta2", "beta3",
@@ -433,6 +433,17 @@ post_kappa$true_value <- kappa_c
 obs_df <- data.frame(county   = county_names,
                      obs_rate = NA_real_)
 obs_df$obs_rate[observed_idx] <- y_OSDH_i / n_OSDH_i
+
+# Save combined county posteriors for vignette rendering
+county_post_df <- post_rho %>%
+  rename(rho_mean = mean, rho_lci = lci, rho_uci = uci, rho_true = true_value) %>%
+  left_join(post_phi   %>% rename(phi_mean   = mean, phi_lci   = lci, phi_uci   = uci,
+                                  phi_true   = true_value), by = "county") %>%
+  left_join(post_kappa %>% rename(kappa_mean = mean, kappa_lci = lci, kappa_uci = uci,
+                                  kappa_true = true_value), by = "county") %>%
+  left_join(obs_df, by = "county")
+
+write.csv(county_post_df, "output/demo_county_posteriors.csv", row.names = FALSE)
 
 ###############################################################################
 # 10. Maps

@@ -1,0 +1,502 @@
+---
+title: "BEACON: Correcting Surveillance Undercount for AI/AN Gestational Diabetes in Oklahoma"
+author: "Emily N. Peterson"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    theme: flatly
+    embed-resources: true
+    fig-width: 8
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+---
+
+## Background
+
+### The Problem
+
+American Indian and Alaska Native (AI/AN) women face some of the highest rates
+of gestational diabetes mellitus (GDM) in the United States — roughly twice
+the rate of non-Hispanic White women. Yet state-level surveillance data are
+known to undercount AI/AN births and diagnoses, both because of racial
+misclassification and because a substantial share of Cherokee Nation members
+receive prenatal care exclusively through Cherokee Nation Health Services
+rather than providers who report to the Oklahoma State Department of Health
+(OSDH).
+
+The result is a systematic downward bias: the OSDH-reported AI/AN GDM rate in
+a county reflects not just the true disease burden but also how completely the
+surveillance system detects it. Counties with strong Cherokee Nation clinical
+infrastructure may look statistically *similar* to counties with very low true
+prevalence, simply because their cases flow through a parallel health system.
+
+### Cherokee Nation as an Anchor
+
+Cherokee Nation Public Health (CNPH) maintains its own clinical registry
+covering GDM diagnoses for births at CN health facilities. In the 7 Oklahoma
+counties that have CN service coverage, this registry provides a near-complete
+count of GDM among Cherokee mothers — a gold-standard anchor that the state
+system cannot provide on its own.
+
+BEACON (**B**ayesian **E**stimation and **C**orrection for **A**I/AN **O**utcomes
+using **N**ative-data) jointly models the OSDH and CN data streams to recover
+the latent true AI/AN GDM prevalence surface across all 77 Oklahoma counties.
+
+---
+
+## The BEACON Model
+
+### Three Latent County-Level Surfaces
+
+Let $c = 1, \ldots, 77$ index Oklahoma counties. The model estimates three
+latent quantities simultaneously:
+
+| Symbol | Name | Interpretation |
+|--------|------|----------------|
+| $\rho_c$ | True AI/AN GDM prevalence | Probability a randomly selected AI/AN birth in county $c$ results in a GDM diagnosis |
+| $\varphi_c$ | OSDH sensitivity | Probability OSDH captures a true case in county $c$ |
+| $\kappa_c$ | CN detection probability | Probability CN health system captures a Cherokee birth in county $c$ |
+
+Each surface lives on $(0,1)$ and is modeled on the logit scale with
+covariate terms and spatial random effects.
+
+### Likelihood
+
+**OSDH data** (Eq. 1). For county $c$ with AI/AN births $n_c^{\text{OSDH}}$,
+the observed OSDH GDM count $y_c^{\text{OSDH}}$ is:
+$$
+y_c^{\text{OSDH}} \mid n_c^{\text{OSDH}} \sim \text{Binomial}\!\left(n_c^{\text{OSDH}},\; \rho_c \cdot \varphi_c\right)
+$$
+
+OSDH only observes the *attenuated* rate $\rho_c \cdot \varphi_c$. Counties
+suppressed by OSDH (fewer than 5 AI/AN births) contribute no direct likelihood.
+
+**Cherokee Nation data** (Eq. 2). For the $k = 1, \ldots, 7$ CN-covered
+counties with CN births $n_k^{\text{CN}}$:
+$$
+y_k^{\text{CN}} \mid n_k^{\text{CN}} \sim \text{Binomial}\!\left(n_k^{\text{CN}},\; \rho_k \cdot \kappa_k\right)
+$$
+
+The shared parameter $\rho_c$ appears in both likelihoods — this is the
+identification mechanism. Because each data source attenuates $\rho_c$ by a
+*different* nuisance parameter ($\varphi_c$ vs. $\kappa_c$), their joint
+information can separate the true signal from the detection bias.
+
+### Regression Models
+
+**True prevalence** (Eq. 3):
+$$
+\text{logit}(\rho_c) = \beta_0 + \beta_1 \text{SNAP}_c + \beta_2 \text{LowAccess}_c + \beta_3 \text{AdequateCare}_c + v_c^{(p)} + u_c^{(p)}
+$$
+
+Covariates: proportion of county receiving SNAP ($+$), proportion with low
+food access ($+$), proportion of births with adequate prenatal care ($-$).
+
+**OSDH sensitivity** (Eq. 4):
+$$
+\text{logit}(\varphi_c) = \gamma_0 + \gamma_1 \log(\hat{p}_c^{\text{AIAN}}) + v_c^{(\varphi)} + u_c^{(\varphi)}
+$$
+
+Sensitivity is modeled as a function of the log-proportion AI/AN in the
+county. Counties with a larger AI/AN share are expected to have better-tuned
+surveillance systems.
+
+**CN detection probability** (Eq. 5):
+$$
+\text{logit}(\kappa_c) = \alpha_0 + \alpha_1 \cdot \text{ClinicCount}_c + \alpha_3 \cdot \text{Spillover}_c
+$$
+
+CN detection has no spatial random effect. The two covariates capture direct
+CN clinical presence (number of CN facilities in county $c$) and a
+distance-decay spillover term measuring proximity to CN facilities in
+neighboring counties:
+$$
+\text{Spillover}_c = \sum_{j \in \mathcal{J}} \exp\!\left(-d_{cj}/75\right)
+$$
+where $d_{cj}$ is the distance in km from county $c$'s centroid to CN clinic
+$j$, and the sum excludes clinics in county $c$'s own territory (already
+captured by ClinicCount).
+
+The 75-km bandwidth reflects the practical travel range for prenatal
+appointments — enough to reach an adjacent county, but insufficient to span
+the state.
+
+### Random Effects
+
+Both $\rho_c$ and $\varphi_c$ include a BYM2-style decomposition into an ICAR
+structured component $v_c$ (spatial autocorrelation) and an unstructured iid
+component $u_c$:
+$$
+v_c^{(\cdot)} \sim \text{ICAR}(\tau_{v}^{(\cdot)}), \quad u_c^{(\cdot)} \sim \mathcal{N}(0, \sigma_{u}^{(\cdot)2})
+$$
+
+The $\kappa_c$ surface has no random effect: with GDM data from only 7 CN
+counties, a spatial random effect would over-smooth CN-county estimates into
+adjacent non-CN counties.
+
+### Priors
+
+All regression coefficients receive weakly informative Normal priors centered
+near zero; $\beta_0$ is centered at $\text{logit}(0.12) \approx -2$
+(roughly 10–15% GDM prevalence) and $\alpha_0$ at $-1$ (roughly 27% baseline
+CN detection, recognizing incomplete capture even within CN territory). Variance
+components receive half-Normal(0, 2.5) priors.
+
+---
+
+## Synthetic Data Demonstration
+
+Because the Cherokee Nation clinical data are governed by a Tribal data use
+agreement, the demo below uses **synthetic data** generated with parameters
+fixed at the posterior means from the fitted model. The synthetic data are
+designed to mirror the structure of the real analysis: 77 counties, realistic
+covariate distributions, suppression of small AI/AN counts, and CN clinical
+data for 7 service counties.
+
+> **Note:** Run `demo_aian_gdm_oklahoma.R` (or `make_example_outputs.R` for a
+> faster version) before rendering this vignette. Outputs are loaded from
+> `output/`.
+
+### Setup
+
+```{r setup}
+library(tidyverse)
+library(tigris)
+library(sf)
+library(spdep)
+
+options(tigris_use_cache = TRUE)
+```
+
+### Oklahoma County Spatial Structure
+
+```{r spatial}
+OKcounties <- tigris::counties("Oklahoma", cb = FALSE)
+OKcounties <- OKcounties[order(OKcounties$NAME), ]
+county_names <- OKcounties$NAME
+C            <- length(county_names)
+
+ok_map <- tigris::counties(state = "OK", cb = TRUE, class = "sf")
+ok_map <- ok_map[order(ok_map$NAME), ]
+
+cat(sprintf("Counties: %d\n", C))
+```
+
+### Synthetic Covariates
+
+The demo script generates three types of covariates:
+
+- **$x_c$** — true prevalence model: SNAP receipt (`propSNAP`), low food access
+  (`prop_lowaccess`), adequate prenatal care (`adequate_care`)
+- **$w_c$** — sensitivity model: log-proportion AI/AN (`prop_aian`)
+- **$d_c$** — CN detection: clinic count (`n_clinics`) + distance-decay
+  spillover (`cn_spillover`)
+
+```{r covariates}
+set.seed(2025)
+
+propSNAP       <- rbeta(C, 2,  8)
+prop_lowaccess <- rbeta(C, 2, 10)
+adequate_care  <- rbeta(C, 7,  2)
+prop_aian      <- pmax(rbeta(C, 1, 18), 0.001)
+
+cn_county_names <- c("Adair", "Cherokee", "Delaware", "Mayes",
+                     "Muskogee", "Rogers", "Sequoyah")
+cn_idx    <- which(county_names %in% cn_county_names)
+n_clinics <- rep(0L, C)
+n_clinics[cn_idx] <- sample(1:2, length(cn_idx), replace = TRUE)
+
+# Distance-decay spillover from publicly known CN facility locations
+cn_clinic_coords <- data.frame(
+  lat    = c(35.9106, 35.9098, 35.7297, 36.4212, 36.7480,
+             35.4587, 35.8144, 36.2929, 36.7006, 36.6408),
+  long   = c(-94.9710, -94.9478, -95.3104, -94.8043, -95.9724,
+             -94.7879, -94.6286, -95.1533, -95.6380, -95.1564),
+  county = c("Cherokee", "Cherokee", "Muskogee", "Delaware", "Washington",
+             "Sequoyah", "Adair", "Mayes", "Nowata", "Craig")
+)
+lambda_km           <- 75
+cn_clinics_sf       <- st_as_sf(cn_clinic_coords, coords = c("long", "lat"), crs = 4326) %>%
+  st_transform(crs = 5070)
+county_centroids_sf <- ok_map %>% st_transform(crs = 5070) %>%
+  st_centroid() %>% arrange(NAME)
+dist_km             <- matrix(as.numeric(st_distance(county_centroids_sf, cn_clinics_sf)),
+                              nrow = C) / 1000
+same_county_mask    <- outer(county_centroids_sf$NAME, cn_clinic_coords$county, FUN = "==")
+decay_matrix        <- exp(-dist_km / lambda_km)
+decay_matrix[same_county_mask] <- 0
+cn_spillover        <- rowSums(decay_matrix)
+```
+
+The spillover surface decays steeply with distance. @fig-spillover shows that
+only counties immediately adjacent to the CN core service area receive
+meaningful spillover weight.
+
+```{r fig-spillover, fig.cap="Distance-decay CN spillover covariate. Darker counties are closer to at least one CN clinical facility."}
+ok_map %>%
+  left_join(data.frame(NAME = county_names, spillover = cn_spillover),
+            by = "NAME") %>%
+  ggplot() +
+  geom_sf(aes(fill = spillover), color = "white", linewidth = 0.2) +
+  scale_fill_distiller(palette = "YlOrRd", direction = 1,
+                       name = "Spillover\nweight") +
+  theme_minimal(base_size = 11) +
+  labs(title    = "CN Distance-Decay Spillover Covariate",
+       subtitle = expression(Sigma[j] ~ exp(-d[cj]/75 ~ km) ~ ", own-county excluded"))
+```
+
+### True Parameter Values
+
+The synthetic data use these parameters, fixed at posterior means from the
+fitted model. The model's job is to recover them.
+
+```{r true-params}
+beta0  <- -1.56;  beta1  <-  3.50;  beta2  <- -0.36;  beta3  <- -0.36
+gamma0 <- -0.46;  gamma1 <- -0.36
+alpha0 <- -1.48;  alpha1 <-  0.97;  alpha3 <-  1.00
+
+sigma_p_v   <- 0.345;  sigma_p_u   <- 0.321
+sigma_phi_v <- 0.540;  sigma_phi_u <- 0.288
+
+tibble(
+  Parameter = c("β₀ (GDM intercept)", "β₁ (SNAP)", "β₂ (Low food access)",
+                "β₃ (Adequate care)", "γ₀ (Sensitivity intercept)",
+                "γ₁ (log prop. AIAN)", "α₀ (CN coverage intercept)",
+                "α₁ (CN clinic count)", "α₃ (Spillover)",
+                "σ_p,v", "σ_p,u", "σ_φ,v", "σ_φ,u"),
+  `True value` = c(beta0, beta1, beta2, beta3, gamma0, gamma1,
+                   alpha0, alpha1, alpha3,
+                   sigma_p_v, sigma_p_u, sigma_phi_v, sigma_phi_u)
+) |> knitr::kable(digits = 3)
+```
+
+Key interpretations on the probability scale:
+
+- $\text{logit}^{-1}(\beta_0) \approx$ `r round(plogis(beta0), 3)` — baseline GDM
+  prevalence in a county at mean covariates, no spatial effect
+- $\text{logit}^{-1}(\gamma_0) \approx$ `r round(plogis(gamma0), 3)` — baseline OSDH
+  sensitivity (roughly 39% of cases are captured at the average AI/AN share)
+- $\text{logit}^{-1}(\alpha_0) \approx$ `r round(plogis(alpha0), 3)` — baseline CN
+  detection in a county with no CN facilities and zero spillover
+
+---
+
+## NIMBLE Model Code
+
+The full NIMBLE model definition is reproduced here for reference. See
+`demo_aian_gdm_oklahoma.R` for a directly runnable version.
+
+```{r nimble-model, eval=FALSE}
+library(nimble)
+
+myCode <- nimbleCode({
+
+  # OSDH likelihood [Eq. 1]
+  for (i in 1:N_OSDH) {
+    y_OSDH_i[i] ~ dbin(rho_error_c[getc_i[i]], n_OSDH_i[i])
+  }
+
+  # Cherokee Nation likelihood [Eq. 2]
+  for (k in 1:N_CN) {
+    y_CN_k[k] ~ dbin(rho_true_c[getc_k[k]] * kappa_c[getc_k[k]], n_CN_k[k])
+  }
+
+  for (c in 1:Ncounties) {
+
+    rho_error_c[c] <- rho_true_c[c] * phi_c[c]   # attenuated OSDH rate
+
+    # True prevalence [Eq. 3]
+    logit(rho_true_c[c]) <- beta0 +
+                            beta1 * propSNAP[c] +
+                            beta2 * prop_lowaccess[c] +
+                            beta3 * adequate_care[c] +
+                            v_p_c[c] + u_p_c[c]
+
+    # OSDH sensitivity [Eq. 4]
+    logit(phi_c[c]) <- gamma0 +
+                       gamma1 * log(prop_aian[c]) +
+                       v_phi_c[c] + u_phi_c[c]
+
+    # CN detection [Eq. 5] — no spatial random effect
+    logit(kappa_c[c]) <- alpha0 +
+                         alpha1 * n_clinics[c] +
+                         alpha3 * cn_spillover[c]
+
+    u_p_c[c]   ~ dnorm(0, sd = sigma_p_u)
+    u_phi_c[c] ~ dnorm(0, sd = sigma_phi_u)
+  }
+
+  # ICAR spatial effects
+  v_p_c[1:Ncounties]   ~ dcar_normal(adj[1:L], weights[1:L], num[1:Ncounties],
+                                     tau = 1 / (sigma_p_v^2),   zero_mean = 1)
+  v_phi_c[1:Ncounties] ~ dcar_normal(adj[1:L], weights[1:L], num[1:Ncounties],
+                                     tau = 1 / (sigma_phi_v^2), zero_mean = 1)
+
+  # Priors
+  beta0 ~ dnorm(-2,  sd = 1)
+  beta1 ~ dnorm(0.5, sd = 5);  beta2 ~ dnorm(0.5, sd = 5);  beta3 ~ dnorm(0.5, sd = 5)
+  gamma0 ~ dnorm(0,  sd = 1);  gamma1 ~ dnorm(0, sd = 1)
+  alpha0 ~ dnorm(-1, sd = 1);  alpha1 ~ dnorm(0, sd = 1);  alpha3 ~ dnorm(0, sd = 1)
+
+  sigma_p_u   ~ T(dnorm(0, sd = 2.5), 0.0001, )
+  sigma_p_v   ~ T(dnorm(0, sd = 2.5), 0.0001, )
+  sigma_phi_u ~ T(dnorm(0, sd = 2.5), 0.0001, )
+  sigma_phi_v ~ T(dnorm(0, sd = 2.5), 0.0001, )
+})
+```
+
+---
+
+## Results
+
+The following sections load pre-computed posterior summaries from
+`output/demo_results_table.csv` (generated by running
+`demo_aian_gdm_oklahoma.R`). County-level posteriors are loaded from
+`output/demo_county_posteriors.csv`.
+
+```{r load-results}
+results_file  <- "output/demo_results_table.csv"
+counties_file <- "output/demo_county_posteriors.csv"
+
+if (!file.exists(results_file)) {
+  stop("Run demo_aian_gdm_oklahoma.R (or make_example_outputs.R) first to generate output/.")
+}
+
+results_table   <- read.csv(results_file)
+county_post     <- read.csv(counties_file)
+```
+
+### Scalar Parameter Recovery
+
+@tbl-recovery shows posterior means, 95% credible intervals, and
+Gelman–Rubin $\hat{R}$ for each scalar parameter alongside the true synthetic
+value.
+
+```{r tbl-recovery}
+#| label: tbl-recovery
+#| tbl-cap: "Posterior summaries and convergence diagnostics. True values are the fixed parameters used to generate the synthetic data. Rhat < 1.1 indicates adequate chain mixing."
+results_table |>
+  mutate(
+    `95% CrI` = sprintf("[%.3f, %.3f]", LCI_95, UCI_95),
+    Rhat      = round(Rhat, 3),
+    ESS       = round(ESS, 0)
+  ) |>
+  select(Parameter, True_Value, Post_Mean, Post_SD, `95% CrI`, Rhat, ESS) |>
+  knitr::kable(digits = 3)
+```
+
+A well-fitting run will show posterior means close to the true values with
+$\hat{R} \leq 1.10$ for all parameters. The 95% credible interval should
+contain the true value for roughly 95% of parameters across repeated synthetic
+datasets.
+
+### County-Level Maps
+
+```{r maps-setup}
+map_df <- ok_map %>%
+  left_join(county_post, by = c("NAME" = "county"))
+```
+
+#### Adjusted AI/AN GDM Prevalence
+
+@fig-rho shows the posterior mean of $\rho_c^{\text{true}}$ — the adjusted
+prevalence after accounting for OSDH sensitivity. Compare this to the naive
+observed OSDH rate (@fig-obs): counties that are suppressed or poorly detected
+by OSDH receive information through the spatial model and the CN anchor.
+
+```{r fig-rho, fig.cap="Posterior mean adjusted AI/AN GDM prevalence. Grey counties had OSDH data suppressed (< 5 AI/AN births) and are estimated entirely through the spatial model and CN likelihood."}
+ggplot(map_df) +
+  geom_sf(aes(fill = rho_mean), color = "white", linewidth = 0.2) +
+  scale_fill_distiller(palette = "Purples", direction = 1,
+                       name = expression(hat(rho)[c]^{true}),
+                       limits = c(0, 0.45), oob = scales::squish,
+                       na.value = "grey80") +
+  theme_minimal(base_size = 11) +
+  labs(title    = "Posterior Mean Adjusted AI/AN GDM Prevalence",
+       subtitle = "Synthetic data demonstration")
+```
+
+```{r fig-obs, fig.cap="Naive observed OSDH rate (GDM cases / AI/AN births). Grey counties are suppressed. The BEACON model corrects both suppressed counties and systematic underdetection in reported counties."}
+ggplot(map_df) +
+  geom_sf(aes(fill = obs_rate), color = "white", linewidth = 0.2) +
+  scale_fill_distiller(palette = "Purples", direction = 1,
+                       name = "Observed\nrate",
+                       limits = c(0, 0.45), oob = scales::squish,
+                       na.value = "grey80") +
+  theme_minimal(base_size = 11) +
+  labs(title    = "Naive OSDH-Observed AI/AN GDM Rate (unadjusted)",
+       subtitle = "Synthetic data demonstration — grey = suppressed")
+```
+
+#### OSDH Sensitivity Surface
+
+@fig-phi maps $\hat{\varphi}_c$ — the estimated probability that a true AI/AN
+GDM case in county $c$ appears in OSDH records. High-AIAN-share counties
+(eastern Oklahoma) tend to have higher sensitivity because providers in those
+communities are more experienced at capturing AI/AN race/ethnicity correctly.
+
+```{r fig-phi, fig.cap="Posterior mean OSDH sensitivity. Values near 1 indicate high data quality; values near 0 indicate substantial undercounting."}
+ggplot(map_df) +
+  geom_sf(aes(fill = phi_mean), color = "white", linewidth = 0.2) +
+  scale_fill_distiller(palette = "RdYlGn", direction = 1,
+                       name = expression(hat(phi)[c]),
+                       limits = c(0, 1)) +
+  theme_minimal(base_size = 11) +
+  labs(title    = "Posterior Mean OSDH Sensitivity",
+       subtitle = "Synthetic data demonstration")
+```
+
+#### CN Detection Probability
+
+@fig-kappa shows $\hat{\kappa}_c$ for all 77 counties. Only the 7 CN-service
+counties contribute direct likelihood information for $\kappa_c$; for all other
+counties $\kappa_c$ is determined entirely by the distance-decay spillover
+covariate and the $\alpha_0$ intercept.
+
+```{r fig-kappa, fig.cap="Posterior mean CN detection probability. The 7 CN-service counties (darker) are estimated primarily from the Cherokee Nation clinical data; the remaining counties reflect the distance-decay covariate only."}
+cn_map <- map_df %>% filter(NAME %in% cn_county_names)
+
+ggplot() +
+  geom_sf(data = map_df,  fill = "grey92", color = "white", linewidth = 0.2) +
+  geom_sf(data = map_df,  aes(fill = kappa_mean), color = "white", linewidth = 0.2) +
+  scale_fill_distiller(palette = "Blues", direction = 1,
+                       name = expression(hat(kappa)[c]),
+                       limits = c(0, 1), na.value = "grey92") +
+  theme_minimal(base_size = 11) +
+  labs(title    = "Posterior Mean CN Detection Probability",
+       subtitle = "Synthetic data demonstration")
+```
+
+---
+
+## Summary
+
+BEACON separates the signal from the noise by jointly modeling two
+complementary surveillance streams:
+
+1. **OSDH data** — broad geographic coverage, subject to racial
+   misclassification and incomplete provider reporting ($\varphi_c < 1$)
+2. **CN clinical data** — complete within Cherokee Nation service counties,
+   but only observed for women who use CN facilities ($\kappa_c < 1$)
+
+The shared true prevalence $\rho_c$ is identified because the two sources
+attenuate it by different, covariate-driven mechanisms. Spatial borrowing
+through ICAR random effects smooths estimates for suppressed counties and
+stabilizes inference in counties with very few AI/AN births.
+
+The model is implemented in NIMBLE and can be run end-to-end using
+`demo_aian_gdm_oklahoma.R`.
+
+---
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```
