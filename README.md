@@ -2,7 +2,7 @@
 
 **Bayesian Estimation and Correction for AI/AN Outcomes using Native-data**
 
-This repository contains reproducible demo scripts for statistical methods developed in collaboration with Tribal Nations. Because all projects involve Tribal health data governed by data use agreements, original data cannot be shared publicly. Each project folder contains a self-contained demo script that replicates the analysis using synthetic data generated to mirror the structure of the real data.
+This repository contains reproducible demo scripts for statistical methods developed in collaboration with Cherokee Nation Public Health. Because all projects involve Cherokee health data governed by data use agreements, original data cannot be shared publicly. Each project folder contains a self-contained demo script that replicates the analysis using synthetic data generated to mirror the structure of the real data.
 
 ## Projects
 
